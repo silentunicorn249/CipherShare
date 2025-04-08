@@ -1,0 +1,4 @@
+*.pdf
+*.pyc
+shared_files/
+.idea/
