@@ -11,23 +11,32 @@ import time
 # ---------------------------
 BUFFER_SIZE = 4096  # bytes per chunk
 SHARED_FILES_DIR = "./shared_files"  # directory where files to share are stored
+DOWNLOAD_DIR = "./downloads"  # directory where downloaded files are saved
+
+# Global set of disabled files (by filename)
+DISABLED_FILES = set()
+# Global dictionary mapping filename to set of allowed IP addresses
+SHARED_FILE_RESTRICTIONS = {}
 
 # Discovery server configuration
 DISCOVERY_SERVER_IP = "127.0.0.1"  # Adjust as needed
 DISCOVERY_SERVER_PORT = 6000
 
 # Heartbeat interval (in seconds)
-HEARTBEAT_INTERVAL = 30
+HEARTBEAT_INTERVAL = 90
 
 
 # ---------------------------
 # Utility Functions
 # ---------------------------
 def list_local_shared_files():
-    """Return a list of files available in the shared directory."""
+    """Return a list of files available in the shared directory, excluding disabled files."""
     if not os.path.exists(SHARED_FILES_DIR):
         os.makedirs(SHARED_FILES_DIR)
-    return os.listdir(SHARED_FILES_DIR)
+    if not os.path.exists(DOWNLOAD_DIR):
+        os.makedirs(DOWNLOAD_DIR)
+    all_files = os.listdir(SHARED_FILES_DIR)
+    return [f for f in all_files if f not in DISABLED_FILES]
 
 
 def send_all(sock, data):
@@ -154,16 +163,17 @@ class P2PNode:
             try:
                 client_sock, client_addr = self.server_socket.accept()
                 print(f"[INFO] Accepted connection from {client_addr}")
-                threading.Thread(target=self.handle_client, args=(client_sock,), daemon=True).start()
+                threading.Thread(target=self.handle_client, args=(client_sock, client_addr), daemon=True).start()
             except Exception as e:
                 print(f"[ERROR] Error accepting connection: {e}")
 
-    def handle_client(self, client_sock):
+    def handle_client(self, client_sock: socket.socket, client_addr):
         """
         Handle incoming requests from a connected peer.
         Protocol:
           - The client sends a command string ("LIST", "DOWNLOAD <filename>").
           - Depending on the command, reply with the list or send the file data.
+          - For DOWNLOAD, verifies if the file is restricted to specific nodes.
         """
         try:
             data = client_sock.recv(BUFFER_SIZE).decode("utf-8").strip()
@@ -180,6 +190,16 @@ class P2PNode:
                 client_sock.send(response.encode("utf-8"))
             elif command == "DOWNLOAD" and len(tokens) > 1:
                 filename = tokens[1]
+                # Check if file is restricted and if client's IP is allowed:
+                if filename in DISABLED_FILES:
+                    client_sock.send(b"ERROR: File is disabled for sharing")
+                    return
+                if filename in SHARED_FILE_RESTRICTIONS:
+                    allowed_ips = SHARED_FILE_RESTRICTIONS[filename]
+                    client_ip = client_addr[0]
+                    if client_ip not in allowed_ips:
+                        client_sock.send(b"ERROR: Not allowed to download this file")
+                        return
                 filepath = os.path.join(SHARED_FILES_DIR, filename)
                 if os.path.exists(filepath):
                     # Send file size first
@@ -252,7 +272,7 @@ class P2PNode:
                     filedata += chunk
                     remaining -= len(chunk)
                 # Save the file
-                save_path = os.path.join(SHARED_FILES_DIR, filename)
+                save_path = os.path.join(DOWNLOAD_DIR, filename)
                 with open(save_path, "wb") as f:
                     f.write(filedata)
                 print(f"[INFO] Downloaded file '{filename}' from {peer_ip}:{peer_port}")
@@ -273,6 +293,10 @@ def cli_loop(node: P2PNode):
         "  list_active                     - List active peers from discovery server\n"
         "  search <filename>               - Search for a file across peers\n"
         "  download <ip> <port> <filename> - Download a file from a peer\n"
+        "  disable_file <filename>         - Disable sharing a file locally\n"
+        "  enable_file <filename>          - Enable sharing a file locally\n"
+        "  restrict_file <filename> <ip1,ip2,...>  - Restrict a file to specific nodes\n"
+        "  unrestrict_file <filename>      - Remove restrictions on a file\n"
         "  exit                          - Exit the application\n"
     )
     print(help_message)
@@ -314,6 +338,29 @@ def cli_loop(node: P2PNode):
                 peer_port = int(parts[2])
                 filename = parts[3]
                 node.download_file_from_peer(peer_ip, peer_port, filename)
+            elif cmd == "disable_file" and len(parts) == 2:
+                filename = parts[1]
+                DISABLED_FILES.add(filename)
+                print(f"File '{filename}' disabled from sharing.")
+            elif cmd == "enable_file" and len(parts) == 2:
+                filename = parts[1]
+                if filename in DISABLED_FILES:
+                    DISABLED_FILES.remove(filename)
+                    print(f"File '{filename}' enabled for sharing.")
+                else:
+                    print(f"File '{filename}' is not disabled.")
+            elif cmd == "restrict_file" and len(parts) == 3:
+                filename = parts[1]
+                allowed_ips = parts[2].split(",")
+                SHARED_FILE_RESTRICTIONS[filename] = set(allowed_ips)
+                print(f"File '{filename}' restricted to nodes: {', '.join(allowed_ips)}")
+            elif cmd == "unrestrict_file" and len(parts) == 2:
+                filename = parts[1]
+                if filename in SHARED_FILE_RESTRICTIONS:
+                    del SHARED_FILE_RESTRICTIONS[filename]
+                    print(f"Restrictions removed for file '{filename}'.")
+                else:
+                    print(f"No restrictions exist for file '{filename}'.")
             elif cmd == "exit":
                 print("Exiting CLI...")
                 node.running = False
@@ -337,8 +384,20 @@ def cli_loop(node: P2PNode):
 def main():
     parser = argparse.ArgumentParser(description="P2P File Sharing Node with Discovery & Heartbeat")
     parser.add_argument("--port", type=int, default=5000, help="Port to listen on for P2P connections")
+    parser.add_argument("--disable-file", action="append", default=[], help="Filename to disable from being shared")
+    # New: Option to restrict file sharing to specific nodes, format: filename:ip1,ip2,...
+    parser.add_argument("--restrict-file", action="append", default=[], help="Restrict a file to specific nodes (format: filename:ip1,ip2,...)")
     args = parser.parse_args()
-
+    
+    global DISABLED_FILES, SHARED_FILE_RESTRICTIONS
+    DISABLED_FILES = set(args.disable_file)
+    for entry in args.restrict_file:
+        try:
+            file_part, ips = entry.split(":")
+            SHARED_FILE_RESTRICTIONS[file_part] = set(ips.split(","))
+        except Exception as e:
+            print(f"[ERROR] Invalid restrict file format '{entry}': {e}")
+    
     p2p_node = P2PNode(port=args.port)
     p2p_node.start_server()
 
@@ -352,8 +411,8 @@ def main():
     register_with_discovery(own_ip, args.port)
 
     # Start heartbeat thread to re-register every HEARTBEAT_INTERVAL seconds.
-    heartbeat_thread = threading.Thread(target=start_heartbeat, args=(own_ip, args.port), daemon=True)
-    heartbeat_thread.start()
+    # heartbeat_thread = threading.Thread(target=start_heartbeat, args=(own_ip, args.port), daemon=True)
+    # heartbeat_thread.start()
 
     print("[INFO] Peer node started and registered with discovery server.")
     cli_loop(p2p_node)

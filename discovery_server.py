@@ -14,7 +14,7 @@ peer_registry = {}
 # Lock for synchronizing access to peer_registry
 registry_lock = threading.Lock()
 
-def handle_client(conn, addr):
+def handle_client(conn: socket.socket, addr):
     try:
         data = conn.recv(BUFFER_SIZE).decode("utf-8").strip()
         if not data:
@@ -26,10 +26,9 @@ def handle_client(conn, addr):
         response = ""
 
         if command == "REGISTER":
-            # Expected format: REGISTER <peer_ip> <peer_port> <file1,file2,...>
-            # This command is used both for initial registration and for heartbeat updates.
-            if len(tokens) < 4:
-                response = "ERROR: REGISTER command format: REGISTER <ip> <port> <file1,file2,...>"
+            # Expected format: REGISTER <peer_ip> <peer_port> [<file1,file2,...>]
+            if len(tokens) < 3:
+                response = "ERROR: REGISTER command format: REGISTER <ip> <port> [<file1,file2,...>]"
             else:
                 peer_ip = tokens[1]
                 try:
@@ -37,7 +36,7 @@ def handle_client(conn, addr):
                 except ValueError:
                     response = "ERROR: Invalid port number."
                 else:
-                    file_list = tokens[3].split(",") if tokens[3] else []
+                    file_list = tokens[3].split(",") if len(tokens) >= 4 and tokens[3] else []
                     with registry_lock:
                         peer_registry[(peer_ip, peer_port)] = {"files": file_list, "last_seen": time.time()}
                     response = "REGISTERED"
@@ -94,8 +93,8 @@ def start_discovery_server():
     print(f"[INFO] Discovery server listening on {SERVER_HOST}:{SERVER_PORT}")
 
     # Launch cleanup thread
-    cleanup_thread = threading.Thread(target=registry_cleanup, daemon=True)
-    cleanup_thread.start()
+    # cleanup_thread = threading.Thread(target=registry_cleanup, daemon=True)
+    # cleanup_thread.start()
 
     try:
         while True:
@@ -107,4 +106,5 @@ def start_discovery_server():
         server_socket.close()
 
 if __name__ == "__main__":
-    start_discovery_server()
+    threading.Thread(target=start_discovery_server, args=(), daemon=True).start()
+    input()
