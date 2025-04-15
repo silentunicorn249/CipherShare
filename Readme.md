@@ -54,25 +54,6 @@ Foundation for all secure communications:
 - **Access Control**: Ensures only authorized peers can request/download files.
 - **Hashing**: Used for integrity checks (e.g., verifying that downloaded files haven’t been tampered with).
 
----
-
-## 🔁 Communication Flow
-
-- Peers first attempt to register with the **Discovery Server**. If unavailable, they fall back on decentralized discovery.
-- Once connected, they can **search for files**, **list local and remote files**, and **download files** directly from other peers.
-- All communication is **secured using encryption** and validated using the **authentication layer**.
-
----
-
-## ⚙️ Modular Design Advantage
-
-Layers are decoupled, enabling easy upgrades. For example:
-- A **GUI interface** can replace CLI at the Application Layer.
-- **OAuth2** can replace simple login in the Authentication Layer.
-- **Post-quantum encryption** can replace traditional TLS at the Security Layer.
-
-
-
 
 ## Project Specifications
 
