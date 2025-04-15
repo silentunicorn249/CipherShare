@@ -117,7 +117,7 @@ This version of the project implements a decentralized peer discovery mechanism.
 
 ## Support
 
-For any questions or issues, please contact [Your Email] or open an issue on the repository.
+For any questions or issues, please open an issue on the repository.
 
 ---
 
