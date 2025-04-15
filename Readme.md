@@ -62,16 +62,8 @@ This version of the project implements a decentralized peer discovery mechanism.
    venv\Scripts\activate
    ```
 
-3. **Install Dependencies:**
 
-   If you have a `requirements.txt` file, install the necessary packages:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-   _Note:_ For this project version, there are no external dependencies beyond the Python Standard Library. You can manually create a `requirements.txt` later when adding additional libraries (e.g., for encryption or advanced logging).
-
-4. **Project Directory Structure:**
+3. **Project Directory Structure:**
 
    ```
    ciphershare/
@@ -82,14 +74,14 @@ This version of the project implements a decentralized peer discovery mechanism.
    └── requirements.txt           # Optional dependencies file
    ```
 
-5. **Running the Discovery Server (Optional):**
+4. **Running the Discovery Server (Optional):**
 
    If you wish to use the discovery server, run it in a separate terminal:
    ```bash
    python discovery_server.py
    ```
 
-6. **Running a P2P Node:**
+5. **Running a P2P Node:**
 
    To start a node, run the main node script:
    ```bash
@@ -98,7 +90,7 @@ This version of the project implements a decentralized peer discovery mechanism.
 
    The node will attempt to connect to the discovery server (by default at 127.0.0.1:6000). If the server is unreachable, it will prompt you to enter an alternate node address.
 
-7. **Using the CLI:**
+6. **Using the CLI:**
 
    Once the node is running, you’ll see the CLI prompt. Available commands include:
    - **list_local** – List local shared files.
