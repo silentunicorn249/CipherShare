@@ -44,7 +44,7 @@ This version of the project implements a decentralized peer discovery mechanism.
 1. **Clone the Repository (if using Git):**
 
    ```bash
-   git clone https://github.com/your_username/ciphershare.git
+   git clone [https://github.com/your_username/ciphershare.git](https://github.com/silentunicorn249/CipherShare.git)
    cd ciphershare
    ```
 
