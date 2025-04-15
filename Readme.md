@@ -9,6 +9,74 @@
 
 This version of the project implements a decentralized peer discovery mechanism. Peers attempt to register with a centralized discovery server (by default on port 6000). In the decentralized mode, each node maintains its own neighbor list and uses controlled flooding (broadcast messages with TTL and unique identifiers) to search for files and peer information.
 
+## System Architecture
+Below is a high-level overview of **CipherShare's** modular architecture, showcasing the interaction between layers (Application, Authentication, Security) and peer nodes:
+
+![CipherShare System Architecture](./System_Arch.drawio[1]_page-0001.jpg)  
+*Figure 1: Decentralized P2P architecture with discovery servers, peer registration, and secure file exchange.*
+
+🔍 Diagram Breakdown
+1. Application Layer
+
+The top layer that manages all user-facing operations and peer interactions.
+
+Discovery Server acts as a bootstrap point:
+
+Peer Registration: Nodes register here when they first come online.
+
+List Active Users: Tracks online peers and helps newcomers connect.
+
+Key Distribution: Shares public keys securely for encrypted communication.
+
+Heartbeat & Liveness Tracking: Continuously monitors peer availability.
+
+Peer Nodes (A, B, C):
+
+Each peer can perform:
+
+Search: Discover files or peers.
+
+List Files: Display local files available for sharing.
+
+Download: Fetch files directly from another peer.
+
+2. Authentication Layer
+
+Ensures only verified peers can interact with the network.
+
+Handles:
+
+Login/Auth: Validates identity of peers.
+
+Key Management: Manages cryptographic keys for secure sessions.
+
+3. Security Layer
+
+Foundation for all secure communications:
+
+Secure P2P TLS: End-to-end encrypted channels between peers.
+
+Access Control: Ensures only authorized peers can request/download files.
+
+Hashing: Used for integrity checks (e.g., verifying that downloaded files haven’t been tampered with).
+
+🔁 Communication Flow
+Peers first attempt to register with the Discovery Server. If unavailable, they fall back on decentralized discovery.
+
+Once connected, they can search for files, list local and remote files, and download files directly from other peers.
+
+All communication is secured using encryption and validated using the authentication layer.
+
+⚙️ Modular Design Advantage
+Layers are decoupled, enabling easy upgrades. For example:
+
+A GUI interface can replace CLI at the Application Layer.
+
+OAuth2 can replace simple login in the Authentication Layer.
+
+Post-quantum encryption can replace traditional TLS at the Security Layer.
+
+
 ## Project Specifications
 
 - **Project Title:**  
