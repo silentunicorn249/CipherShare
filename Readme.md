@@ -7,7 +7,7 @@
 
 **CipherShare** is a decentralized P2P file sharing platform that ensures secure and resilient file exchange between peers. The system was designed with modularity and scalability in mind, enabling easy integration of future features such as authentication, encryption, and GUI-based interaction.
 
-This version of the project implements a decentralized peer discovery mechanism. Peers attempt to register with a centralized discovery server (by default on port 6000) but automatically fall back to a decentralized model if the discovery server is unavailable. In the decentralized mode, each node maintains its own neighbor list and uses controlled flooding (broadcast messages with TTL and unique identifiers) to search for files and peer information.
+This version of the project implements a decentralized peer discovery mechanism. Peers attempt to register with a centralized discovery server (by default on port 6000). In the decentralized mode, each node maintains its own neighbor list and uses controlled flooding (broadcast messages with TTL and unique identifiers) to search for files and peer information.
 
 ## Project Specifications
 
@@ -18,7 +18,7 @@ This version of the project implements a decentralized peer discovery mechanism.
   - **Basic P2P File Sharing:**  
     Peers can list, download, and share files (stored in a local folder).
   - **Centralized Discovery Fallback:**  
-    On startup, a node attempts to register with a discovery server (default IP: 127.0.0.1, port: 6000). If unavailable, the node prompts for an alternate peer to bootstrap the network.
+    On startup, a node attempts to register with a discovery server (default IP: 127.0.0.1, port: 6000).
   - **Decentralized Peer Discovery:**  
     - **Broadcast Search:** Searches for a file across the network by flooding broadcast messages with a TTL.
     - **Discover Neighbors:** Nodes can query their neighbors (using a new `DISCOVER` command) to receive additional neighbor lists and merge them into their own.
