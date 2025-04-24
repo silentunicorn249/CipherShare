@@ -9,16 +9,16 @@ from node import *
 def cli_loop(node: P2PNode):
     help_message = (
         "\nAvailable commands:\n"
-        "  list_local                      - List files in your shared folder\n"
-        "  list_peer <ip> <port>           - List files available at a peer\n"
-        "  list_active                     - List active peers from discovery server\n"
-        "  search <filename>               - Search for a file across peers\n"
-        "  download <ip> <port> <filename> - Download a file from a peer\n"
-        "  disable_file <filename>         - Disable sharing a file locally\n"
-        "  enable_file <filename>          - Enable sharing a file locally\n"
-        "  restrict_file <filename> <ip1,ip2,...>  - Restrict a file to specific nodes\n"
-        "  unrestrict_file <filename>      - Remove restrictions on a file\n"
-        "  exit                          - Exit the application\n"
+        "  list_local                                - List files in your shared folder\n"
+        "  list_peer <username>                      - List files available at a peer\n"
+        "  list_active                               - List active peers from discovery server\n"
+        "  search <filename>                         - Search for a file across peers\n"
+        "  download <username> <filename>            - Download a file from a peer\n"
+        "  disable_file <filename>                   - Disable sharing a file locally\n"
+        "  enable_file <filename>                    - Enable sharing a file locally\n"
+        "  restrict_file <filename> <ip1,ip2,...>    - Restrict a file to specific nodes\n"
+        "  unrestrict_file <filename>                - Remove restrictions on a file\n"
+        "  exit                                      - Exit the application\n"
     )
     print(help_message)
     while True:
@@ -33,12 +33,11 @@ def cli_loop(node: P2PNode):
                 files = node.list_local_shared_files()
                 print("Local shared files:", files)
 
-            elif cmd == "list_peer" and len(parts) == 3:
-                peer_ip = parts[1]
-                peer_port = int(parts[2])
-                files = node.get_peer_file_list(peer_ip, peer_port)
+            elif cmd == "list_peer" and len(parts) == 2:
+                username = parts[1]
+                files = node.get_peer_file_list(username)
                 if files is not None:
-                    print(f"Files at {peer_ip}:{peer_port}:", files)
+                    print(f"Files at {username}:", files)
                 else:
                     print("Could not retrieve file list from the peer.")
 
@@ -46,8 +45,9 @@ def cli_loop(node: P2PNode):
                 peers = node.get_active_peers()
                 if peers:
                     print("Active peers (from discovery):")
-                    for (ip, port), files in peers.items():
-                        print(f"  {ip}:{port} -> {files}")
+                    print(peers)
+                    for username, (ip, port) in peers.items():
+                        print(f"  {username} -> {ip}:{port}")
                 else:
                     print("No active peers found.")
 
@@ -59,11 +59,10 @@ def cli_loop(node: P2PNode):
                 else:
                     print(f"No peers found with '{filename}'.")
 
-            elif cmd == "download" and len(parts) == 4:
-                peer_ip = parts[1]
-                peer_port = int(parts[2])
-                filename = parts[3]
-                node.download_file_from_peer(peer_ip, peer_port, filename)
+            elif cmd == "download" and len(parts) == 3:
+                username = parts[1]
+                filename = parts[2]
+                node.download_file_from_peer(username, filename)
 
             elif cmd == "disable_file" and len(parts) == 2:
                 filename = parts[1]

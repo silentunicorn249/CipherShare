@@ -21,7 +21,8 @@ class P2PNode:
         self.disabled_files = set()
         # Global dictionary mapping filename to set of allowed IP addresses
         self.shared_files_restrictions = {}
-        self.session_token = None
+        self.session_token = ""
+        self.peers = {}
 
     # ---------------------------
     # Utility Functions
@@ -81,16 +82,27 @@ class P2PNode:
             self.register_with_discovery(own_ip, own_port)
             time.sleep(HEARTBEAT_INTERVAL)
 
+    def send_discovery_message(self, request_msg):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((DISCOVERY_SERVER_IP, DISCOVERY_SERVER_PORT))
+        print(f"[DISCOVERY] Sending request: {request_msg}")
+        sock.send(request_msg.encode("utf-8"))
+        data = sock.recv(BUFFER_SIZE).decode("utf-8")
+        sock.close()
+
+        if data.startswith("ERROR"):
+            print(f"[Server ERROR] {data}")
+            return ""
+
+        return data
+
     def get_active_peers(self):
         """Query the discovery server for a list of active peers and their files."""
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect((DISCOVERY_SERVER_IP, DISCOVERY_SERVER_PORT))
+            return self.peers
             request_msg = f"LIST {self.session_token}"
-            print(f"[DISCOVERY] Sending request: {request_msg}")
-            sock.send(request_msg.encode("utf-8"))
-            data = sock.recv(BUFFER_SIZE).decode("utf-8")
-            sock.close()
+
+            data = self.send_discovery_message(request_msg)
 
             # Parse response format: ip:port|file1,file2;ip:port|fileA,fileB;...
             peers = {}
@@ -109,12 +121,9 @@ class P2PNode:
     def search_file_discovery(self, filename):
         """Search for peers that have the given file."""
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect((DISCOVERY_SERVER_IP, DISCOVERY_SERVER_PORT))
             search_msg = f"SEARCH {self.session_token} {filename}"
-            sock.send(search_msg.encode("utf-8"))
-            response = sock.recv(BUFFER_SIZE).decode("utf-8")
-            sock.close()
+            response = self.send_discovery_message(search_msg)
+            if not response: return
 
             # Response format: ip:port,ip:port,... or "NOT_FOUND"
             if response == "NOT_FOUND":
@@ -160,6 +169,7 @@ class P2PNode:
           - Depending on the command, reply with the list or send the file data.
           - For DOWNLOAD, verifies if the file is restricted to specific nodes.
         """
+        print(f"Started handling client {client_addr}")
         try:
             data = client_sock.recv(BUFFER_SIZE).decode("utf-8").strip()
             if not data:
@@ -200,6 +210,14 @@ class P2PNode:
                     print(f"[INFO] Sent file '{filename}'")
                 else:
                     client_sock.send(b"ERROR: File not found")
+
+            elif command == "UPDATE":
+                print(f"[INFO] GOT Update {tokens}")
+                username = tokens[1]
+                peer_ip = tokens[2]
+                peer_port = int(tokens[3])
+                self.peers[username] = [peer_ip, peer_port]
+
             else:
                 client_sock.send(b"ERROR: Unknown command")
         except Exception as e:
@@ -238,8 +256,15 @@ class P2PNode:
             return True
         return False
 
-    def get_peer_file_list(self, peer_ip, peer_port):
+    def get_peer_file_list(self, username):
         """Connect to a peer and request its file list."""
+        _ = self.peers[username]
+        if _:
+            peer_ip, peer_port = self.peers[username]
+        else:
+            # TODO extract print
+            print("No user found")
+            return
         sock = self.connect_to_peer(peer_ip, peer_port)
         if sock:
             try:
@@ -253,8 +278,15 @@ class P2PNode:
                 sock.close()
         return None
 
-    def download_file_from_peer(self, peer_ip, peer_port, filename):
+    def download_file_from_peer(self, username, filename):
         """Download a file from a peer."""
+        _ = self.peers[username]
+        if _:
+            peer_ip, peer_port = self.peers[username]
+        else:
+            # TODO extract print
+            print("No user found")
+            return
         sock = self.connect_to_peer(peer_ip, peer_port)
         if sock:
             try:
