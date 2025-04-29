@@ -2,6 +2,7 @@
 # CLI Interface Module
 # ---------------------------
 import argparse
+import socket
 
 from node import *
 
@@ -107,6 +108,55 @@ def cli_loop(node: P2PNode):
             print(f"[ERROR] {e}")
 
 
+def authentication_loop(p2p_node: P2PNode, ip, port):
+    help_message = (
+        "\nAvailable commands:\n"
+        " Register                  - register <username> <password>\n"
+        " Login                     - login <username> <password>\n"
+        " exit - Exit the application\n"
+    )
+    print(help_message)
+    while True:
+        try:
+            user_input = input(">> ").strip()
+            if not user_input:
+                continue
+            parts = user_input.split()
+            cmd = parts[0].lower()
+            if cmd == "register" and len(parts) == 3:
+                username = parts[1]
+                password = parts[2]
+                if p2p_node.register_user(username, password, ip, port):
+                    print(f"User '{username}' registered successfully.")
+                    return True
+                    # break
+
+            elif cmd == "login" and len(parts) == 3:
+                username = parts[1]
+                password = parts[2]
+                if p2p_node.login_user(username, password):
+                    print(f"User '{username}' logged in successfully.")
+                    return True
+                    # break
+
+            elif cmd == "exit":
+                print("Exiting CLI...")
+                p2p_node.running = False
+                p2p_node.server_socket.close()
+                return False
+                # break
+            else:
+                print("Unknown command. Available commands:")
+                print(help_message)
+        except KeyboardInterrupt:
+            print("\nExiting...")
+            p2p_node.running = False
+            p2p_node.server_socket.close()
+            break
+        except Exception as e:
+            print(f"[ERROR] {e}")
+
+
 # ---------------------------
 # Main Entry Point
 # ---------------------------
@@ -132,7 +182,10 @@ def main():
     # heartbeat_thread = threading.Thread(target=start_heartbeat, args=(own_ip, args.port), daemon=True)
     # heartbeat_thread.start()
 
-    if p2p_node.initial_authentication(own_ip, args.port):
+    # this function is called when the node starts and will register with the server using
+    # the username and password provided by the user
+
+    if authentication_loop(p2p_node, own_ip, args.port):
         print("[INFO] Peer node started and registered with discovery server.")
         cli_loop(p2p_node)
 

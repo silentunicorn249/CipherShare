@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import os
-import socket
 import sys
 import threading
 import time
 from typing import List
+from socket import AF_INET, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR
+
+from SecureSocket import SecureSocket
 
 from constants import *
 
@@ -16,7 +18,7 @@ class P2PNode:
     def __init__(self, host="0.0.0.0", port=5000):
         self.host = host
         self.port = port
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket = SecureSocket(AF_INET, SOCK_STREAM)
         self.running = True
         self.disabled_files = set()
         # Global dictionary mapping filename to set of allowed IP addresses
@@ -40,7 +42,7 @@ class P2PNode:
     def register_with_discovery(self, own_ip, own_port):
         """Register this peer with the discovery server along with its file list."""
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock = SecureSocket(AF_INET, SOCK_STREAM)
             sock.connect((DISCOVERY_SERVER_IP, DISCOVERY_SERVER_PORT))
             files = self.list_local_shared_files()
             file_list_str = ",".join(files)
@@ -83,7 +85,7 @@ class P2PNode:
             time.sleep(HEARTBEAT_INTERVAL)
 
     def send_discovery_message(self, request_msg):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock = SecureSocket(AF_INET, SOCK_STREAM)
         sock.connect((DISCOVERY_SERVER_IP, DISCOVERY_SERVER_PORT))
         print(f"[DISCOVERY] Sending request: {request_msg}")
         sock.send(request_msg.encode("utf-8"))
@@ -143,6 +145,7 @@ class P2PNode:
         """Start a thread to listen for incoming peer connections."""
         try:
             self.server_socket.bind((self.host, self.port))
+            self.server_socket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
             self.server_socket.listen(5)
             print(f"[INFO] Listening on {self.host}:{self.port}")
         except Exception as e:
@@ -161,7 +164,7 @@ class P2PNode:
             except Exception as e:
                 print(f"[ERROR] Error accepting connection: {e}")
 
-    def handle_client(self, client_sock: socket.socket, client_addr):
+    def handle_client(self, client_sock: SecureSocket, client_addr):
         """
         Handle incoming requests from a connected peer.
         Protocol:
@@ -228,7 +231,7 @@ class P2PNode:
     def connect_to_peer(self, peer_ip, peer_port):
         """Create a connection to another peer."""
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock = SecureSocket(AF_INET, SOCK_STREAM)
             sock.connect((peer_ip, peer_port))
             return sock
         except Exception as e:
@@ -322,7 +325,7 @@ class P2PNode:
     def register_user(self, username, password, own_ip, own_port):
         """Register a new user with the given username and password."""
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock = SecureSocket(AF_INET, SOCK_STREAM)
             sock.connect((DISCOVERY_SERVER_IP, DISCOVERY_SERVER_PORT))
             files = self.list_local_shared_files()
             file_list_str = ",".join(files)
@@ -344,7 +347,8 @@ class P2PNode:
     def login_user(self, username, password):
         """Login with the given username and password."""
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            print(SecureSocket)
+            sock = SecureSocket(AF_INET, SOCK_STREAM)
             sock.connect((DISCOVERY_SERVER_IP, DISCOVERY_SERVER_PORT))
             login_msg = f"LOGIN {username} {password}"
             sock.send(login_msg.encode("utf-8"))
@@ -365,54 +369,3 @@ class P2PNode:
             print(f"[ERROR] Failed to login with discovery server: {e}")
         finally:
             sock.close()
-
-    def initial_authentication(self, own_ip, own_port):
-        # this function is called when the node starts and will register with the server using
-        # the username and password provided by the user
-        help_message = (
-            "\nAvailable commands:\n"
-            " Register                  - register <username> <password>\n"
-            " Login                     - login <username> <password>\n"
-            " exit - Exit the application\n"
-        )
-        print(help_message)
-        while True:
-            try:
-                user_input = input(">> ").strip()
-                if not user_input:
-                    continue
-                parts = user_input.split()
-                cmd = parts[0].lower()
-                if cmd == "register" and len(parts) == 3:
-                    username = parts[1]
-                    password = parts[2]
-                    if self.register_user(username, password, own_ip, own_port):
-                        print(f"User '{username}' registered successfully.")
-                        return True
-                        # break
-
-                elif cmd == "login" and len(parts) == 3:
-
-                    username = parts[1]
-                    password = parts[2]
-                    if self.login_user(username, password):
-                        print(f"User '{username}' logged in successfully.")
-                        return True
-                        # break
-
-                elif cmd == "exit":
-                    print("Exiting CLI...")
-                    self.running = False
-                    self.server_socket.close()
-                    return False
-                    # break
-                else:
-                    print("Unknown command. Available commands:")
-                    print(help_message)
-            except KeyboardInterrupt:
-                print("\nExiting...")
-                self.running = False
-                self.server_socket.close()
-                break
-            except Exception as e:
-                print(f"[ERROR] {e}")
