@@ -2,7 +2,10 @@ import os
 import struct
 from socket import socket
 
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 
 class SecureSocket(socket):
@@ -24,12 +27,34 @@ class SecureSocket(socket):
         else:
             self._aesgcm = None
 
+    def accept(self):
+        print("Started to accept connection")
+        raw_sock, addr = super().accept()
+
+        print(f"Accepted connection from {addr}")
+
+        # detach the FD so raw_sock no longer owns it
+        raw_fd = raw_sock.detach()
+
+        print("Detaching connection")
+        # wrap into SecureSocket (same family/type/proto) + do handshake
+        ss = SecureSocket(self.family,
+                          self.type,
+                          self.proto,
+                          key=None,
+                          fileno=raw_fd)
+        # print("Performing key exchange")
+        # ss._perform_key_exchange(is_server=True)
+        return ss, addr
+
     def send(self, plaintext: bytes) -> int:
         """
         Encrypts `plaintext` with AESGCM.encrypt(nonce, plaintext, None),
         frames it with a 4-byte length header, and sends atomically.
         Returns total bytes sent (header + payload).
         """
+
+        print(f"Sending plaintext {plaintext}")
         if not self._aesgcm:
             super().sendall(plaintext)
             return len(plaintext)
@@ -39,6 +64,7 @@ class SecureSocket(socket):
         payload = nonce + ct_and_tag
         header = struct.pack('!I', len(payload))
         # sendall to ensure full delivery
+        print(f"Sending payload {payload}")
         super().sendall(header + payload)
         return len(header) + len(payload)
 
@@ -48,6 +74,7 @@ class SecureSocket(socket):
         decrypts it with AESGCM.decrypt(nonce, ct||tag, None),
         and returns the plaintext.
         """
+        print(f"Reading {bufsize}")
         if not self._aesgcm:
             data = super().recv(bufsize)
             return data
@@ -62,10 +89,14 @@ class SecureSocket(socket):
         nonce = blob[:12]
         ct_and_tag = blob[12:]
         try:
+            print(f"Decrypting {ct_and_tag}")
             plaintext = self._aesgcm.decrypt(nonce, ct_and_tag, None)
         except Exception as e:
             raise ConnectionError("Decryption/authentication failed") from e
         return plaintext
+
+    def set_key(self, key: bytes):
+        self._aesgcm = AESGCM(key)
 
     def _recv_exact(self, n: int) -> bytes:
         """
@@ -78,3 +109,35 @@ class SecureSocket(socket):
                 raise ConnectionError("Socket closed unexpectedly")
             data += chunk
         return data
+
+    def _perform_key_exchange(self, is_server: bool):
+        print("Starting key exchange")
+        # 1) Generate ephemeral X25519 key pair
+        priv = x25519.X25519PrivateKey.generate()
+        pub_bytes = priv.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw)
+
+        if is_server:
+            # Server: receive client pub, then send our pub
+            client_pub = self._recv_exact(len(pub_bytes))
+            super().sendall(pub_bytes)
+            peer_pub = x25519.X25519PublicKey.from_public_bytes(client_pub)
+        else:
+            # Client: send our pub, then receive server pub
+            super().sendall(pub_bytes)
+            server_pub = self._recv_exact(len(pub_bytes))
+            peer_pub = x25519.X25519PublicKey.from_public_bytes(server_pub)
+
+        # 2) Derive shared secret and stretch to 32-byte key via HKDF
+        shared_secret = priv.exchange(peer_pub)
+        key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=b"secure-socket-handshake",
+        ).derive(shared_secret)
+
+        # 3) Install AESGCM cipher
+        self._aesgcm = AESGCM(key)
+        print("Done key exchange")

@@ -93,7 +93,7 @@ def cli_loop(node: P2PNode):
             elif cmd == "exit":
                 print("Exiting CLI...")
                 node.running = False
-                node.server_socket.close()
+                node.peer_socket.close()
                 break
 
             else:
@@ -102,10 +102,8 @@ def cli_loop(node: P2PNode):
         except KeyboardInterrupt:
             print("\nExiting...")
             node.running = False
-            node.server_socket.close()
+            node.peer_socket.close()
             break
-        except Exception as e:
-            print(f"[ERROR] {e}")
 
 
 def authentication_loop(p2p_node: P2PNode, ip, port):
@@ -142,7 +140,7 @@ def authentication_loop(p2p_node: P2PNode, ip, port):
             elif cmd == "exit":
                 print("Exiting CLI...")
                 p2p_node.running = False
-                p2p_node.server_socket.close()
+                p2p_node.peer_socket.close()
                 return False
                 # break
             else:
@@ -151,7 +149,7 @@ def authentication_loop(p2p_node: P2PNode, ip, port):
         except KeyboardInterrupt:
             print("\nExiting...")
             p2p_node.running = False
-            p2p_node.server_socket.close()
+            p2p_node.peer_socket.close()
             break
         except Exception as e:
             print(f"[ERROR] {e}")

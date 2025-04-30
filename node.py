@@ -1,14 +1,27 @@
 #!/usr/bin/env python3
+import hashlib
 import os
 import sys
 import threading
 import time
-from typing import List
 from socket import AF_INET, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR
+from typing import List
+
+from cryptography.hazmat.primitives import hashes
 
 from SecureSocket import SecureSocket
-
 from constants import *
+
+
+def compute_file_hash(filepath):
+    hasher = hashlib.sha256()
+    with open(filepath, 'rb') as f:
+        while True:
+            chunk = f.read(8192)
+            if not chunk:
+                break
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 # ---------------------------
@@ -18,7 +31,7 @@ class P2PNode:
     def __init__(self, host="0.0.0.0", port=5000):
         self.host = host
         self.port = port
-        self.server_socket = SecureSocket(AF_INET, SOCK_STREAM)
+        self.peer_socket = SecureSocket(AF_INET, SOCK_STREAM)
         self.running = True
         self.disabled_files = set()
         # Global dictionary mapping filename to set of allowed IP addresses
@@ -73,6 +86,73 @@ class P2PNode:
                 break
             data += chunk
         return data
+
+    def handle_upload(self, tokens, client_sock: SecureSocket, client_ip):
+        client_sock._perform_key_exchange(is_server=True)
+        if len(tokens) < 2:
+            client_sock.send(b"ERROR: Invalid command")
+            return
+
+        filename = tokens[1]
+        if filename in self.disabled_files:
+            client_sock.send(b"ERROR: File is disabled for sharing")
+            return
+
+        if filename in self.shared_files_restrictions:
+            allowed_ips = self.shared_files_restrictions[filename]
+            if client_ip not in allowed_ips:
+                client_sock.send(b"ERROR: Not allowed to download this file")
+                return
+
+        filepath = os.path.join(SHARED_FILES_DIR, filename)
+        if not os.path.exists(filepath):
+            client_sock.send(b"ERROR: File not found")
+            return
+
+        filesize = os.path.getsize(filepath)
+        client_sock.send(f"{filesize}".encode("utf-8"))
+        ack = client_sock.recv(BUFFER_SIZE)  # wait for acknowledgment
+
+        hash_obj = hashlib.sha256()
+        with open(filepath, "rb") as f:
+            while True:
+                chunk = f.read(BUFFER_SIZE)
+                if not chunk:
+                    break
+                hash_obj.update(chunk)
+                client_sock.send(chunk)  # Using send directly as per SecureSocket
+        # Send the hash
+        hash_value = hash_obj.digest()
+        client_sock.send(hash_value)
+
+        client_sock.close()
+
+        print(f"[INFO] Sent file '{filename}' with hash {hash_value}")
+
+    def recv_file(self, save_path: str, socket: SecureSocket):
+        header = socket.recv(1024).decode()
+        filesize_str, expected_hash = header.split(":")
+        filesize = int(filesize_str)
+
+        received = 0
+        hasher = hashes.Hash(hashes.SHA256())
+        with open(save_path, "wb") as f:
+            while received < filesize:
+                chunk = socket.recv(min(FILE_CHUNK_SIZE, filesize - received))
+                f.write(chunk)
+                hasher.update(chunk)
+                received += len(chunk)
+
+        digest = hasher.finalize().hex()
+        if digest != expected_hash:
+            raise IOError(f"Integrity check failed: expected {expected_hash}, got {digest}")
+
+    def compute_file_hash(path: str, chunk_size=FILE_CHUNK_SIZE) -> str:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(chunk_size), b""):
+                h.update(chunk)
+        return h.hexdigest()
 
     # ---------------------------
     # Discovery Client Functions
@@ -144,9 +224,9 @@ class P2PNode:
     def start_server(self):
         """Start a thread to listen for incoming peer connections."""
         try:
-            self.server_socket.bind((self.host, self.port))
-            self.server_socket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-            self.server_socket.listen(5)
+            self.peer_socket.bind((self.host, self.port))
+            self.peer_socket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+            self.peer_socket.listen(5)
             print(f"[INFO] Listening on {self.host}:{self.port}")
         except Exception as e:
             print(f"[ERROR] Could not start server: {e}")
@@ -158,7 +238,7 @@ class P2PNode:
         """Accept incoming connections and create a new thread to handle them."""
         while self.running:
             try:
-                client_sock, client_addr = self.server_socket.accept()
+                client_sock, client_addr = self.peer_socket.accept()
                 print(f"[INFO] Accepted connection from {client_addr}")
                 threading.Thread(target=self.handle_client, args=(client_sock, client_addr), daemon=True).start()
             except Exception as e:
@@ -173,7 +253,7 @@ class P2PNode:
           - For DOWNLOAD, verifies if the file is restricted to specific nodes.
         """
         print(f"Started handling client {client_addr}")
-        try:
+        if True:
             data = client_sock.recv(BUFFER_SIZE).decode("utf-8").strip()
             if not data:
                 client_sock.close()
@@ -187,32 +267,8 @@ class P2PNode:
                 response = ",".join(files)
                 client_sock.send(response.encode("utf-8"))
             elif command == "DOWNLOAD" and len(tokens) > 1:
-                filename = tokens[1]
-                # Check if file is restricted and if client's IP is allowed:
-                if filename in self.disabled_files:
-                    client_sock.send(b"ERROR: File is disabled for sharing")
-                    return
-                if filename in self.shared_files_restrictions:
-                    allowed_ips = self.shared_files_restrictions[filename]
-                    client_ip = client_addr[0]
-                    if client_ip not in allowed_ips:
-                        client_sock.send(b"ERROR: Not allowed to download this file")
-                        return
-                filepath = os.path.join(SHARED_FILES_DIR, filename)
-                if os.path.exists(filepath):
-                    # Send file size first
-                    filesize = os.path.getsize(filepath)
-                    client_sock.send(f"{filesize}".encode("utf-8"))
-                    ack = client_sock.recv(BUFFER_SIZE)  # wait for acknowledgment
-                    with open(filepath, "rb") as f:
-                        while True:
-                            chunk = f.read(BUFFER_SIZE)
-                            if not chunk:
-                                break
-                            self.send_all(client_sock, chunk)
-                    print(f"[INFO] Sent file '{filename}'")
-                else:
-                    client_sock.send(b"ERROR: File not found")
+                print(f"starting uploading file {tokens}")
+                self.handle_upload(tokens, client_sock, client_addr[0])
 
             elif command == "UPDATE":
                 print(f"[INFO] GOT Update {tokens}")
@@ -223,14 +279,15 @@ class P2PNode:
 
             else:
                 client_sock.send(b"ERROR: Unknown command")
-        except Exception as e:
-            print(f"[ERROR] Handling client error: {e}")
-        finally:
-            client_sock.close()
+        # except Exception as e:
+        #     print(f"[ERROR] Handling client error: {e}")
+        # finally:
+        #     client_sock.close()
 
     def connect_to_peer(self, peer_ip, peer_port):
         """Create a connection to another peer."""
         try:
+            print(f"[INFO] Connecting to {peer_ip}:{peer_port}")
             sock = SecureSocket(AF_INET, SOCK_STREAM)
             sock.connect((peer_ip, peer_port))
             return sock
@@ -287,36 +344,45 @@ class P2PNode:
         if _:
             peer_ip, peer_port = self.peers[username]
         else:
-            # TODO extract print
             print("No user found")
             return
+
+        print(f"Downloading file from peer {username}")
         sock = self.connect_to_peer(peer_ip, peer_port)
         if sock:
             try:
                 command = f"DOWNLOAD {filename}"
                 sock.send(command.encode("utf-8"))
-                # First receive file size
+                sock._perform_key_exchange(is_server=False)
                 response = sock.recv(BUFFER_SIZE).decode("utf-8")
                 if response.startswith("ERROR"):
                     print(response)
                     sock.close()
                     return
                 filesize = int(response)
-                # Send acknowledgment
                 sock.send(b"ACK")
                 remaining = filesize
                 filedata = b""
-                while remaining:
-                    chunk = sock.recv(min(BUFFER_SIZE, remaining))
+                hash_obj = hashlib.sha256()
+                while remaining > 0:
+                    chunk = sock.recv(BUFFER_SIZE)  # Each recv gets one full message
                     if not chunk:
                         break
+                    hash_obj.update(chunk)
                     filedata += chunk
                     remaining -= len(chunk)
                 # Save the file
                 save_path = os.path.join(DOWNLOAD_DIR, filename)
                 with open(save_path, "wb") as f:
                     f.write(filedata)
-                print(f"[INFO] Downloaded file '{filename}' from {peer_ip}:{peer_port}")
+                # Receive and verify the hash
+                received_hash = sock.recv(32)  # SHA-256 hash is 32 bytes
+                computed_hash = hash_obj.digest()
+                if received_hash == computed_hash:
+                    print(f"[INFO] Downloaded file '{filename}' from {peer_ip}:{peer_port} with integrity verified")
+                    print(f"Hash is {received_hash}")
+                else:
+                    print(f"[ERROR] File integrity check failed for '{filename}'")
             except Exception as e:
                 print(f"[ERROR] Error downloading file: {e}")
             finally:
