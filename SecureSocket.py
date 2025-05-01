@@ -36,13 +36,14 @@ class SecureSocket(socket):
         # detach the FD so raw_sock no longer owns it
         raw_fd = raw_sock.detach()
 
-        print("Detaching connection")
+        print("Deatacched completed connection")
         # wrap into SecureSocket (same family/type/proto) + do handshake
         ss = SecureSocket(self.family,
                           self.type,
                           self.proto,
                           key=None,
                           fileno=raw_fd)
+        print("Created new secure socket")
         # print("Performing key exchange")
         # ss._perform_key_exchange(is_server=True)
         return ss, addr
@@ -77,6 +78,7 @@ class SecureSocket(socket):
         print(f"Reading {bufsize}")
         if not self._aesgcm:
             data = super().recv(bufsize)
+            print(f"Reading raw data {data}")
             return data
 
         # Read exact 4-byte length
@@ -118,15 +120,23 @@ class SecureSocket(socket):
             encoding=serialization.Encoding.Raw,
             format=serialization.PublicFormat.Raw)
 
+        print(pub_bytes)
+
         if is_server:
-            # Server: receive client pub, then send our pub
-            client_pub = self._recv_exact(len(pub_bytes))
+            # Server: Send own pub key FIRST, then wait for client's pub key
+            print("Server: Sending public key")
             super().sendall(pub_bytes)
+            print("Server: Waiting for client public key")
+            client_pub = self._recv_exact(len(pub_bytes))  # Use raw recv
+            print("Server: Received client public key")
             peer_pub = x25519.X25519PublicKey.from_public_bytes(client_pub)
         else:
-            # Client: send our pub, then receive server pub
+            # Client: Wait for server's pub key FIRST, then send own pub key
+            print("Client: Waiting for server public key")
+            server_pub = self._recv_exact(len(pub_bytes))  # Use raw recv
+            print("Client: Received server public key, sending own public key")
             super().sendall(pub_bytes)
-            server_pub = self._recv_exact(len(pub_bytes))
+            print("Client: Sent public key")
             peer_pub = x25519.X25519PublicKey.from_public_bytes(server_pub)
 
         # 2) Derive shared secret and stretch to 32-byte key via HKDF
