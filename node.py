@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import hashlib
 import os
+import socket
 import sys
 import threading
+import time
 from socket import AF_INET, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR
 from typing import List
 
@@ -37,6 +39,18 @@ class P2PNode:
         self.session_token = ""
         self.peers = {}
         self.username = ""
+
+        # Start heartbeat thread to re-register every HEARTBEAT_INTERVAL seconds.
+        heartbeat_thread = threading.Thread(target=self.start_heartbeat, args=(), daemon=True)
+        heartbeat_thread.start()
+
+    def start_heartbeat(self):
+        while self.running:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((DISCOVERY_SERVER_IP, DISCOVERY_SERVER_PORT))
+            sock.sendall(f"HEARTBEAT {self.session_token}".encode('utf-8'))
+            sock.close()
+            time.sleep(HEARTBEAT_INTERVAL - 5)
 
     # ---------------------------
     # Utility Functions

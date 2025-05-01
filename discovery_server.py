@@ -10,7 +10,14 @@ from tinydb import Query, TinyDB
 
 from constants import *
 
+# Sessions map: token -> user info
 sessions = {}
+
+# Active peers map: (ip, port) -> { last_heartbeat, username, files, etc. }
+active_peers = {}
+
+# Lock for synchronizing active peers operations
+active_peers_lock = threading.Lock()
 
 # Underlying TinyDB store (file on disk)
 peer_registry_store = TinyDB('peer_registry.json')
@@ -87,6 +94,53 @@ def registry_interface(operation, filters=None, data=None):
             raise ValueError(f"Unknown operation: {operation}")
 
 
+# Active peers management functions
+def update_active_peer(username, ip, port, files=None):
+    """
+    Update or add an active peer to the in-memory active peers list
+    """
+    key = (ip, port)
+    with active_peers_lock:
+        if key in active_peers:
+            active_peers[key].update({
+                'last_heartbeat': time.time(),
+                'username': username
+            })
+            if files is not None:
+                active_peers[key]['files'] = files
+        else:
+            active_peers[key] = {
+                'username': username,
+                'ip': ip,
+                'port': port,
+                'files': files or [],
+                'last_heartbeat': time.time()
+            }
+    return active_peers[key]
+
+
+def remove_active_peer(ip, port):
+    """
+    Remove a peer from the active peers list
+    """
+    key = (ip, port)
+    with active_peers_lock:
+        if key in active_peers:
+            del active_peers[key]
+            return True
+    return False
+
+
+def get_active_peers(filter_func=None):
+    """
+    Get a list of currently active peers, optionally filtered
+    """
+    with active_peers_lock:
+        if filter_func:
+            return [peer for peer in active_peers.values() if filter_func(peer)]
+        return list(active_peers.values())
+
+
 # Load DB into memory at startup
 registry_interface('load')
 
@@ -101,7 +155,9 @@ def notify_peers(username: str, ip: str, port: int, token: str):
     e.g. "UPDATE alice 10.0.0.5 5500"
     """
     message = f"UPDATE {username} {ip} {port} {token}"
-    for entry in registry_interface('read'):
+    # Use active peers instead of registry for notifications
+    current_active_peers = get_active_peers()
+    for entry in current_active_peers:
         target_ip = entry['ip']
         target_port = entry['port']
         other_username = entry['username']
@@ -122,6 +178,15 @@ def notify_peers(username: str, ip: str, port: int, token: str):
                 s2.sendall(other_message.encode('utf-8'))
         except Exception as e:
             print(f"[WARN] Could not notify {target_ip}:{target_port} — {e}")
+            # If we can't reach this peer, it might be offline - mark for cleanup
+            # We don't remove immediately here to avoid modifying while iterating
+            entry['unreachable'] = True
+
+    # Clean up any peers marked as unreachable
+    for entry in current_active_peers:
+        if entry.get('unreachable'):
+            remove_active_peer(entry['ip'], entry['port'])
+            print(f"[INFO] Removed unreachable peer: {entry['username']} @ {entry['ip']}:{entry['port']}")
 
 
 def handle_client(conn: socket.socket, addr):
@@ -158,6 +223,8 @@ def handle_client(conn: socket.socket, addr):
                         registry_interface('insert', data=new_entry)
                         token = str(uuid.uuid4())
                         sessions[token] = new_entry
+                        # Add to active peers
+                        update_active_peer(username, peer_ip, peer_port, files)
                         print(f"[INFO] Registered {username} @ {peer_ip}:{peer_port}")
                         notify_peers(username, peer_ip, peer_port, token)
                         response = f'REGISTERED {token}'
@@ -175,12 +242,30 @@ def handle_client(conn: socket.socket, addr):
                     registry_interface('update', filters={'username': username}, data={'last_seen': new_last})
                     token = str(uuid.uuid4())
                     sessions[token] = peer
+                    # Add to active peers
+                    update_active_peer(username, peer['ip'], peer['port'], peer.get('files', []))
                     print(f"[INFO] User {username} logged in from {addr}")
                     notify_peers(username, peer['ip'], peer['port'], token)
                     files_str = ','.join(peer.get('files', []))
                     response = f'LOGGED_IN {token} {peer["ip"]}:{peer["port"]} {files_str}'
                 else:
                     response = 'INVALID_CREDENTIALS'
+
+        elif cmd == 'HEARTBEAT':
+            if len(tokens) != 2:
+                response = 'ERROR: HEARTBEAT command format: HEARTBEAT <session_id>'
+            else:
+                session_id = tokens[1]
+                session = sessions.get(session_id)
+                if not session:
+                    response = 'ERROR: Invalid session ID. Please login first.'
+                else:
+                    username = session['username']
+                    ip = session['ip']
+                    port = session['port']
+                    # Update last heartbeat time
+                    update_active_peer(username, ip, port)
+                    response = 'HEARTBEAT_ACK'
 
         elif cmd == 'LIST':
             if len(tokens) != 2:
@@ -190,13 +275,11 @@ def handle_client(conn: socket.socket, addr):
                 if not session:
                     response = 'ERROR: Invalid session ID. Please login first.'
                 else:
+                    # Use active peers for listing
                     entries = []
-                    for s in sessions.values():
-                        ip, port = s['ip'], s['port']
-                        info = peer_registry_data.get((ip, port))
-                        if info:
-                            files_str = ','.join(info.get('files', []))
-                            entries.append(f"{info['username']}@{ip}:{port}|{files_str}")
+                    for peer in get_active_peers():
+                        files_str = ','.join(peer.get('files', []))
+                        entries.append(f"{peer['username']}@{peer['ip']}:{peer['port']}|{files_str}")
                     response = ';'.join(entries) if entries else 'NO_PEERS_FOUND'
 
         elif cmd == 'SEARCH':
@@ -207,11 +290,31 @@ def handle_client(conn: socket.socket, addr):
                 if session_id not in sessions:
                     response = 'ERROR: Invalid session ID. Please login first.'
                 else:
+                    # Search in active peers
                     matching = []
-                    for entry in registry_interface('read'):
-                        if filename in entry.get('files', []):
-                            matching.append(f"{entry['ip']}:{entry['port']}")
+                    for peer in get_active_peers():
+                        if filename in peer.get('files', []):
+                            matching.append(f"{peer['ip']}:{peer['port']}")
                     response = ','.join(matching) if matching else 'NOT_FOUND'
+
+        elif cmd == 'LOGOUT':
+            if len(tokens) != 2:
+                response = 'ERROR: LOGOUT command format: LOGOUT <session_id>'
+            else:
+                session_id = tokens[1]
+                session = sessions.get(session_id)
+                if not session:
+                    response = 'ERROR: Invalid session ID.'
+                else:
+                    # Remove from active peers
+                    username = session['username']
+                    ip = session['ip']
+                    port = session['port']
+                    remove_active_peer(ip, port)
+                    # Remove session
+                    del sessions[session_id]
+                    print(f"[INFO] User {username} logged out")
+                    response = 'LOGGED_OUT'
 
         else:
             response = 'ERROR: Unknown command'
@@ -224,9 +327,32 @@ def handle_client(conn: socket.socket, addr):
         conn.close()
 
 
+def active_peers_cleanup():
+    """
+    Periodically remove peers that haven't sent a heartbeat in the last 30 seconds.
+    This is separate from the database cleanup as it only affects the in-memory active peers.
+    """
+    while True:
+        time.sleep(HEARTBEAT_INTERVAL)  # Check every 10 seconds
+        now = time.time()
+        peers_to_remove = []
+
+        with active_peers_lock:
+            for key, peer in active_peers.items():
+                if now - peer['last_heartbeat'] > 30:  # 30 seconds timeout
+                    peers_to_remove.append(key)
+
+        # Remove inactive peers outside the lock
+        for key in peers_to_remove:
+            ip, port = key
+            remove_active_peer(ip, port)
+            print(f"[INFO] Removed inactive peer from active list: {key}")
+
+
 def registry_cleanup():
     """
-    Periodically remove peers that haven't sent a heartbeat in the last 90 seconds.
+    Periodically remove peers from the database that haven't sent a heartbeat in the last 90 seconds.
+    This is separate from active peers cleanup as it affects the persistent database.
     """
     while True:
         time.sleep(30)
@@ -234,7 +360,7 @@ def registry_cleanup():
         for entry in registry_interface('read'):
             if now - entry['last_seen'] > 90:
                 registry_interface('delete', filters={'ip': entry['ip'], 'port': entry['port']})
-                print(f"[INFO] Removed inactive peer: {(entry['ip'], entry['port'])}")
+                print(f"[INFO] Removed inactive peer from database: {(entry['ip'], entry['port'])}")
 
 
 def start_discovery_server():
@@ -243,7 +369,8 @@ def start_discovery_server():
     server_socket.listen(5)
     print(f"[INFO] Discovery server listening on {SERVER_HOST}:{SERVER_PORT}")
 
-    # Launch cleanup thread
+    # Launch cleanup threads
+    threading.Thread(target=active_peers_cleanup, daemon=True).start()
     # threading.Thread(target=registry_cleanup, daemon=True).start()
 
     try:

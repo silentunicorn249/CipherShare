@@ -176,13 +176,6 @@ def main():
 
     # register_with_discovery(own_ip, args.port)
 
-    # Start heartbeat thread to re-register every HEARTBEAT_INTERVAL seconds.
-    # heartbeat_thread = threading.Thread(target=start_heartbeat, args=(own_ip, args.port), daemon=True)
-    # heartbeat_thread.start()
-
-    # this function is called when the node starts and will register with the server using
-    # the username and password provided by the user
-
     if authentication_loop(p2p_node, own_ip, args.port):
         print("[INFO] Peer node started and registered with discovery server.")
         cli_loop(p2p_node)

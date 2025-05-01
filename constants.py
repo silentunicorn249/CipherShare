@@ -11,7 +11,7 @@ DISCOVERY_SERVER_IP = "127.0.0.1"  # Adjust as needed
 DISCOVERY_SERVER_PORT = 6000
 
 # Heartbeat interval (in seconds)
-HEARTBEAT_INTERVAL = 90
+HEARTBEAT_INTERVAL = 10
 
 # This will store the session token globally once the user logs in
 

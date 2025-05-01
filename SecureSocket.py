@@ -36,7 +36,7 @@ class SecureSocket(socket):
         # detach the FD so raw_sock no longer owns it
         raw_fd = raw_sock.detach()
 
-        print("Deatacched completed connection")
+        print("Detachment completed")
         # wrap into SecureSocket (same family/type/proto) + do handshake
         ss = SecureSocket(self.family,
                           self.type,
