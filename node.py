@@ -3,14 +3,12 @@ import hashlib
 import os
 import sys
 import threading
-import time
 from socket import AF_INET, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR
 from typing import List
 
-from cryptography.hazmat.primitives import hashes
-
 from SecureSocket import SecureSocket
 from constants import *
+from file_utils import receive_file_with_hash, send_file_with_hash
 
 
 def compute_file_hash(filepath):
@@ -38,6 +36,7 @@ class P2PNode:
         self.shared_files_restrictions = {}
         self.session_token = ""
         self.peers = {}
+        self.username = ""
 
     # ---------------------------
     # Utility Functions
@@ -52,48 +51,7 @@ class P2PNode:
         all_files = os.listdir(SHARED_FILES_DIR)
         return [f for f in all_files if f not in self.disabled_files]
 
-    def register_with_discovery(self, own_ip, own_port):
-        """Register this peer with the discovery server along with its file list."""
-        try:
-            sock = SecureSocket(AF_INET, SOCK_STREAM)
-            sock.connect((DISCOVERY_SERVER_IP, DISCOVERY_SERVER_PORT))
-            files = self.list_local_shared_files()
-            file_list_str = ",".join(files)
-            register_msg = f"REGISTER {own_ip} {own_port} {file_list_str}"
-            sock.send(register_msg.encode("utf-8"))
-            response = sock.recv(BUFFER_SIZE).decode("utf-8")
-            print(f"[DISCOVERY] Register response: {response}")
-        except Exception as e:
-            print(f"[ERROR] Failed to register with discovery server: {e}")
-        finally:
-            sock.close()
-
-    def send_all(self, sock, data):
-        """Helper function to send all data over a socket."""
-        totalsent = 0
-        while totalsent < len(data):
-            sent = sock.send(data[totalsent:])
-            if sent == 0:
-                raise RuntimeError("Socket connection broken")
-            totalsent += sent
-
-    def recv_all(self, sock, length):
-        """Helper function to receive a given amount of data."""
-        data = b""
-        while len(data) < length:
-            chunk = sock.recv(min(length - len(data), BUFFER_SIZE))
-            if chunk == b"":
-                break
-            data += chunk
-        return data
-
-    def handle_upload(self, tokens, client_sock: SecureSocket, client_ip):
-        client_sock._perform_key_exchange(is_server=True)
-        if len(tokens) < 2:
-            client_sock.send(b"ERROR: Invalid command")
-            return
-
-        filename = tokens[1]
+    def upload_file_to_peer(self, filename: str, client_sock: SecureSocket, client_ip):
         if filename in self.disabled_files:
             client_sock.send(b"ERROR: File is disabled for sharing")
             return
@@ -105,64 +63,49 @@ class P2PNode:
                 return
 
         filepath = os.path.join(SHARED_FILES_DIR, filename)
+        print(filepath)
         if not os.path.exists(filepath):
             client_sock.send(b"ERROR: File not found")
             return
 
-        filesize = os.path.getsize(filepath)
-        client_sock.send(f"{filesize}".encode("utf-8"))
-        ack = client_sock.recv(BUFFER_SIZE)  # wait for acknowledgment
+        send_file_with_hash(client_sock, filepath)
 
-        hash_obj = hashlib.sha256()
-        with open(filepath, "rb") as f:
-            while True:
-                chunk = f.read(BUFFER_SIZE)
-                if not chunk:
-                    break
-                hash_obj.update(chunk)
-                client_sock.send(chunk)  # Using send directly as per SecureSocket
-        # Send the hash
-        hash_value = hash_obj.digest()
-        client_sock.send(hash_value)
+    def download_file_from_peer(self, username, filename):
+        """Download a file from a peer."""
+        _ = self.peers[username]
+        if _:
+            peer_ip, peer_port, peer_token = self.peers[username]
+        else:
+            print("No user found")
+            return
 
-        client_sock.close()
-
-        print(f"[INFO] Sent file '{filename}' with hash {hash_value}")
-
-    def recv_file(self, save_path: str, socket: SecureSocket):
-        header = socket.recv(1024).decode()
-        filesize_str, expected_hash = header.split(":")
-        filesize = int(filesize_str)
-
-        received = 0
-        hasher = hashes.Hash(hashes.SHA256())
-        with open(save_path, "wb") as f:
-            while received < filesize:
-                chunk = socket.recv(min(FILE_CHUNK_SIZE, filesize - received))
-                f.write(chunk)
-                hasher.update(chunk)
-                received += len(chunk)
-
-        digest = hasher.finalize().hex()
-        if digest != expected_hash:
-            raise IOError(f"Integrity check failed: expected {expected_hash}, got {digest}")
-
-    def compute_file_hash(path: str, chunk_size=FILE_CHUNK_SIZE) -> str:
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(chunk_size), b""):
-                h.update(chunk)
-        return h.hexdigest()
+        print(f"Downloading file from peer {username}")
+        sock = self.connect_to_peer(peer_ip, peer_port)
+        if sock:
+            try:
+                command = f"DOWNLOAD {filename} {self.username} {self.session_token}"
+                sock.send(command.encode("utf-8"))
+                sock._perform_key_exchange(is_server=False)
+                response = sock.recv(BUFFER_SIZE).decode("utf-8")
+                if response.startswith("ERROR"):
+                    print(response)
+                    sock.close()
+                    return
+                filesize = int(response)
+                received = receive_file_with_hash(sock, filename, filesize)
+                if received:
+                    print(f"[INFO] Downloaded file '{filename}' from {peer_ip}:{peer_port} with integrity verified")
+                else:
+                    print(f"[ERROR] File integrity check failed for '{filename}'")
+            except Exception as e:
+                print(f"[ERROR] Error downloading file: {e}")
+            finally:
+                print("Closing connection")
+                sock.close()
 
     # ---------------------------
     # Discovery Client Functions
     # ---------------------------
-
-    def start_heartbeat(self, own_ip, own_port):
-        """Periodically send registration (heartbeat) to the discovery server."""
-        while True:
-            self.register_with_discovery(own_ip, own_port)
-            time.sleep(HEARTBEAT_INTERVAL)
 
     def send_discovery_message(self, request_msg):
         sock = SecureSocket(AF_INET, SOCK_STREAM)
@@ -268,14 +211,33 @@ class P2PNode:
                 client_sock.send(response.encode("utf-8"))
             elif command == "DOWNLOAD" and len(tokens) > 1:
                 print(f"starting uploading file {tokens}")
-                self.handle_upload(tokens, client_sock, client_addr[0])
+                filename = tokens[1]
+                requester_username = tokens[2]
+                requester_token = tokens[3]
+                client_sock._perform_key_exchange(is_server=True)
+                if requester_username not in self.peers:
+                    client_sock.send(b"ERROR: Unknown user")
+                    client_sock.close()
+                    return
+                saved_token = self.peers[requester_username][2]
+
+                if saved_token != requester_token:
+                    print(tokens)
+                    print(self.peers)
+                    print(saved_token, requester_token)
+                    client_sock.send(b"ERROR: Invalid token")
+                    client_sock.close()
+                    return
+                self.upload_file_to_peer(filename, client_sock, client_addr[0])
+                client_sock.close()
 
             elif command == "UPDATE":
                 print(f"[INFO] GOT Update {tokens}")
                 username = tokens[1]
                 peer_ip = tokens[2]
                 peer_port = int(tokens[3])
-                self.peers[username] = [peer_ip, peer_port]
+                peer_token = tokens[4]
+                self.peers[username] = [peer_ip, peer_port, peer_token]
 
             else:
                 client_sock.send(b"ERROR: Unknown command")
@@ -338,56 +300,6 @@ class P2PNode:
                 sock.close()
         return None
 
-    def download_file_from_peer(self, username, filename):
-        """Download a file from a peer."""
-        _ = self.peers[username]
-        if _:
-            peer_ip, peer_port = self.peers[username]
-        else:
-            print("No user found")
-            return
-
-        print(f"Downloading file from peer {username}")
-        sock = self.connect_to_peer(peer_ip, peer_port)
-        if sock:
-            try:
-                command = f"DOWNLOAD {filename}"
-                sock.send(command.encode("utf-8"))
-                sock._perform_key_exchange(is_server=False)
-                response = sock.recv(BUFFER_SIZE).decode("utf-8")
-                if response.startswith("ERROR"):
-                    print(response)
-                    sock.close()
-                    return
-                filesize = int(response)
-                sock.send(b"ACK")
-                remaining = filesize
-                filedata = b""
-                hash_obj = hashlib.sha256()
-                while remaining > 0:
-                    chunk = sock.recv(BUFFER_SIZE)  # Each recv gets one full message
-                    if not chunk:
-                        break
-                    hash_obj.update(chunk)
-                    filedata += chunk
-                    remaining -= len(chunk)
-                # Save the file
-                save_path = os.path.join(DOWNLOAD_DIR, filename)
-                with open(save_path, "wb") as f:
-                    f.write(filedata)
-                # Receive and verify the hash
-                received_hash = sock.recv(32)  # SHA-256 hash is 32 bytes
-                computed_hash = hash_obj.digest()
-                if received_hash == computed_hash:
-                    print(f"[INFO] Downloaded file '{filename}' from {peer_ip}:{peer_port} with integrity verified")
-                    print(f"Hash is {received_hash}")
-                else:
-                    print(f"[ERROR] File integrity check failed for '{filename}'")
-            except Exception as e:
-                print(f"[ERROR] Error downloading file: {e}")
-            finally:
-                sock.close()
-
     def register_user(self, username, password, own_ip, own_port):
         """Register a new user with the given username and password."""
         try:
@@ -400,6 +312,7 @@ class P2PNode:
             response = sock.recv(BUFFER_SIZE).decode("utf-8").strip()
             if response.startswith("REGISTERED"):
                 self.session_token = response.split(" ")[1] if " " in response else None
+                self.username = username
                 print(f"[INFO] User '{username}' registered successfully.")
                 return True
             else:
@@ -413,7 +326,6 @@ class P2PNode:
     def login_user(self, username, password):
         """Login with the given username and password."""
         try:
-            print(SecureSocket)
             sock = SecureSocket(AF_INET, SOCK_STREAM)
             sock.connect((DISCOVERY_SERVER_IP, DISCOVERY_SERVER_PORT))
             login_msg = f"LOGIN {username} {password}"
@@ -423,6 +335,7 @@ class P2PNode:
                 parts = response.split()
                 if len(parts) >= 4:
                     self.session_token = parts[1]  # Session token is the 4th part
+                    self.username = username
                     print(f"[INFO] User '{username}' logged in successfully with session token {self.session_token}.")
                     return True
                 else:

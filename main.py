@@ -47,8 +47,8 @@ def cli_loop(node: P2PNode):
                 if peers:
                     print("Active peers (from discovery):")
                     print(peers)
-                    for username, (ip, port) in peers.items():
-                        print(f"  {username} -> {ip}:{port}")
+                    for username, (ip, port, token) in peers.items():
+                        print(f"  {username}:{token} -> {ip}:{port}")
                 else:
                     print("No active peers found.")
 

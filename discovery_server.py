@@ -95,12 +95,12 @@ def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
 
-def notify_peers(username: str, ip: str, port: int):
+def notify_peers(username: str, ip: str, port: int, token: str):
     """
     Send a short notification to every other peer:
     e.g. "UPDATE alice 10.0.0.5 5500"
     """
-    message = f"UPDATE {username} {ip} {port}"
+    message = f"UPDATE {username} {ip} {port} {token}"
     for entry in registry_interface('read'):
         target_ip = entry['ip']
         target_port = entry['port']
@@ -115,7 +115,7 @@ def notify_peers(username: str, ip: str, port: int):
                 s.connect((target_ip, target_port))
                 s.sendall(message.encode('utf-8'))
             # Notify back
-            other_message = f"UPDATE {other_username} {target_ip} {target_port}"
+            other_message = f"UPDATE {other_username} {target_ip} {target_port} {token}"
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s2:
                 s2.settimeout(2)
                 s2.connect((ip, port))
@@ -159,7 +159,7 @@ def handle_client(conn: socket.socket, addr):
                         token = str(uuid.uuid4())
                         sessions[token] = new_entry
                         print(f"[INFO] Registered {username} @ {peer_ip}:{peer_port}")
-                        notify_peers(username, peer_ip, peer_port)
+                        notify_peers(username, peer_ip, peer_port, token)
                         response = f'REGISTERED {token}'
 
         elif cmd == 'LOGIN':
@@ -176,7 +176,7 @@ def handle_client(conn: socket.socket, addr):
                     token = str(uuid.uuid4())
                     sessions[token] = peer
                     print(f"[INFO] User {username} logged in from {addr}")
-                    notify_peers(username, peer['ip'], peer['port'])
+                    notify_peers(username, peer['ip'], peer['port'], token)
                     files_str = ','.join(peer.get('files', []))
                     response = f'LOGGED_IN {token} {peer["ip"]}:{peer["port"]} {files_str}'
                 else:
