@@ -4,3 +4,4 @@ shared_files/
 .idea/
 downloads/
 *.json
+*.pem
