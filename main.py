@@ -68,19 +68,20 @@ def main_cli(node: P2PNode):
     """Command-line interface for the P2P Node after authentication."""
     print("\n--- Main Menu ---")
     help_message = (
-        "\nAvailable Commands:\n"
-        "  list                                - List files in your shared folder\n"
-        "  peers                               - List known active peers from discovery server\n"
-        "  updatepeers                         - Force refresh of the active peer list\n"
-        "  search <filename>                   - Search for a file across active peers\n"
-        "  get <username> <filename>           - Download a file from a specific peer\n"
-        "  enable <filename>                   - Enable sharing a local file\n"
-        "  disable <filename>                  - Disable sharing a local file\n"
-        "  restrict <filename> <ip1,ip2,...>   - Restrict a file to specific node IPs\n"
-        "  unrestrict <filename>               - Remove restrictions on a file\n"
-        "  logout                              - Log out from the discovery server\n"
-        "  help                                - Show this help message\n"
-        "  exit                                - Log out and exit the application\n"
+        "\nAvailable commands:\n"
+        "  list_local                                - List files in your shared folder\n"
+        "  list_peer <username>                      - List files available at a peer\n"
+        "  updatepeers                               - Force refresh of the active peer list\n"
+        "  list_active                               - List active peers from discovery server\n"
+        "  search <filename>                         - Search for a file across peers\n"
+        "  download <username> <filename>            - Download a file from a peer\n"
+        "  disable_file <filename>                   - Disable sharing a file locally\n"
+        "  enable_file <filename>                    - Enable sharing a file locally\n"
+        "  restrict_file <filename> <ip1,ip2,...>    - Restrict a file to specific nodes\n"
+        "  unrestrict_file <filename>                - Remove restrictions on a file\n"
+        "  help                                      - Show this help message\n"
+        "  logout                                    - Log out from the discovery server\n"
+        "  exit                                      - Exit the application\n"
     )
     print(help_message)
 
@@ -119,7 +120,7 @@ def main_cli(node: P2PNode):
                 # Optionally, break or return to auth loop here
                 continue
 
-            elif command == "list":  # List local shared files
+            elif command == "list_local":  # List local shared files
                 files = node.list_local_shared_files()
                 if files:
                     print("Locally shared files (enabled):")
@@ -127,7 +128,7 @@ def main_cli(node: P2PNode):
                 else:
                     print("No files currently shared or available in shared directory.")
 
-            elif command == "peers":  # List known peers
+            elif command == "list_active":  # List known peers
                 with node.peers_lock:  # Access peer list safely
                     if node.peers:
                         print(node.peers)
@@ -174,7 +175,7 @@ def main_cli(node: P2PNode):
                 else:
                     print("Usage: search <filename>")
 
-            elif command == "get":  # Download file
+            elif command == "download":  # Download file
                 if len(parts) == 3:
                     username = parts[1]
                     filename = parts[2]
@@ -182,7 +183,7 @@ def main_cli(node: P2PNode):
                 else:
                     print("Usage: get <username> <filename>")
 
-            elif command == "enable":
+            elif command == "enable_file":
                 if len(parts) == 2:
                     filename = parts[1]
                     if node.enable_file(filename):
@@ -191,7 +192,7 @@ def main_cli(node: P2PNode):
                 else:
                     print("Usage: enable <filename>")
 
-            elif command == "disable":
+            elif command == "disable_file":
                 if len(parts) == 2:
                     filename = parts[1]
                     if node.disable_file(filename):
@@ -200,7 +201,7 @@ def main_cli(node: P2PNode):
                 else:
                     print("Usage: disable <filename>")
 
-            elif command == "restrict":
+            elif command == "restrict_file":
                 if len(parts) >= 3:
                     filename = parts[1]
                     # Join remaining parts in case IPs contain spaces, then split by comma
@@ -215,7 +216,7 @@ def main_cli(node: P2PNode):
                 else:
                     print("Usage: restrict <filename> <ip1,ip2,...>")
 
-            elif command == "unrestrict":
+            elif command == "unrestrict_file":
                 if len(parts) == 2:
                     filename = parts[1]
                     if node.unrestrict_file(filename):
