@@ -2,157 +2,242 @@
 # CLI Interface Module
 # ---------------------------
 import argparse
-import socket
+import sys
 
-from node import *
+# Make sure node.py is in the same directory or Python path
+from node import P2PNode
 
 
-def cli_loop(node: P2PNode):
+# --- Authentication Loop ---
+def authentication_loop(p2p_node: P2PNode) -> bool:
+    """Handles user registration or login before entering the main CLI."""
+    print("\n--- P2P File Sharing Node ---")
+    print("Welcome! Please register or login.")
     help_message = (
-        "\nAvailable commands:\n"
-        "  list_local                                - List files in your shared folder\n"
-        "  list_peer <username>                      - List files available at a peer\n"
-        "  list_active                               - List active peers from discovery server\n"
-        "  search <filename>                         - Search for a file across peers\n"
-        "  download <username> <filename>            - Download a file from a peer\n"
-        "  disable_file <filename>                   - Disable sharing a file locally\n"
-        "  enable_file <filename>                    - Enable sharing a file locally\n"
-        "  restrict_file <filename> <ip1,ip2,...>    - Restrict a file to specific nodes\n"
-        "  unrestrict_file <filename>                - Remove restrictions on a file\n"
-        "  exit                                      - Exit the application\n"
+        "\nAuthentication Commands:\n"
+        "  register <username> <password>   - Create a new account\n"
+        "  login    <username> <password>   - Log in to an existing account\n"
+        "  exit                             - Exit the application\n"
     )
     print(help_message)
+
     while True:
         try:
-            user_input = input(">> ").strip()
+            user_input = input("auth> ").strip()
             if not user_input:
                 continue
+
             parts = user_input.split()
             cmd = parts[0].lower()
 
-            if cmd == "list_local":
-                files = node.list_local_shared_files()
-                print("Local shared files:", files)
-
-            elif cmd == "list_peer" and len(parts) == 2:
-                username = parts[1]
-                files = node.get_peer_file_list(username)
-                if files is not None:
-                    print(f"Files at {username}:", files)
-                else:
-                    print("Could not retrieve file list from the peer.")
-
-            elif cmd == "list_active":
-                peers = node.get_active_peers()
-                if peers:
-                    print("Active peers (from discovery):")
-                    print(peers)
-                    for username, (ip, port, token) in peers.items():
-                        print(f"  {username}:{token} -> {ip}:{port}")
-                else:
-                    print("No active peers found.")
-
-            elif cmd == "search" and len(parts) == 2:
-                filename = parts[1]
-                peers = node.search_file_discovery(filename)
-                if peers:
-                    print(f"Peers with '{filename}':", peers)
-                else:
-                    print(f"No peers found with '{filename}'.")
-
-            elif cmd == "download" and len(parts) == 3:
-                username = parts[1]
-                filename = parts[2]
-                node.download_file_from_peer(username, filename)
-
-            elif cmd == "disable_file" and len(parts) == 2:
-                filename = parts[1]
-                node.disable_file(filename)
-                print(f"File '{filename}' disabled from sharing.")
-
-            elif cmd == "enable_file" and len(parts) == 2:
-                filename = parts[1]
-                if node.enable_file(filename):
-                    print(f"File '{filename}' enabled for sharing.")
-                else:
-                    print(f"File '{filename}' is not disabled.")
-
-            elif cmd == "restrict_file" and len(parts) == 3:
-                filename = parts[1]
-                allowed_ips = parts[2].split(",")
-                node.restrict_file(filename, allowed_ips)
-                print(f"File '{filename}' restricted to nodes: {', '.join(allowed_ips)}")
-
-            elif cmd == "unrestrict_file" and len(parts) == 2:
-                filename = parts[1]
-                if node.unrestrict_file(filename):
-                    print(f"Restrictions removed for file '{filename}'.")
-                else:
-                    print(f"No restrictions exist for file '{filename}'.")
-
-            elif cmd == "exit":
-                print("Exiting CLI...")
-                node.running = False
-                node.peer_socket.close()
-                break
-
-            else:
-                print("Unknown command. Available commands:")
-                print(help_message)
-        except KeyboardInterrupt:
-            print("\nExiting...")
-            node.running = False
-            node.peer_socket.close()
-            break
-
-
-def authentication_loop(p2p_node: P2PNode, ip, port):
-    help_message = (
-        "\nAvailable commands:\n"
-        " Register                  - register <username> <password>\n"
-        " Login                     - login <username> <password>\n"
-        " exit - Exit the application\n"
-    )
-    print(help_message)
-    while True:
-        try:
-            user_input = input(">> ").strip()
-            if not user_input:
-                continue
-            parts = user_input.split()
-            cmd = parts[0].lower()
             if cmd == "register" and len(parts) == 3:
                 username = parts[1]
                 password = parts[2]
-                if p2p_node.register_user(username, password, ip, port):
-                    print(f"User '{username}' registered successfully.")
-                    return True
-                    # break
+                if p2p_node.register_user(username, password):
+                    print(f"\nUser '{username}' registered successfully.")
+                    return True  # Proceed to main CLI
 
             elif cmd == "login" and len(parts) == 3:
                 username = parts[1]
                 password = parts[2]
                 if p2p_node.login_user(username, password):
-                    print(f"User '{username}' logged in successfully.")
-                    return True
-                    # break
+                    print(f"\nUser '{username}' logged in successfully.")
+                    return True  # Proceed to main CLI
 
             elif cmd == "exit":
-                print("Exiting CLI...")
-                p2p_node.running = False
-                p2p_node.peer_socket.close()
-                return False
-                # break
+                print("Exiting application...")
+                p2p_node.shutdown()  # Gracefully shutdown node
+                return False  # Do not proceed to main CLI
+
             else:
-                print("Unknown command. Available commands:")
+                print("Unknown command or incorrect usage.")
                 print(help_message)
-        except KeyboardInterrupt:
-            print("\nExiting...")
-            p2p_node.running = False
-            p2p_node.peer_socket.close()
-            break
+
+        except (KeyboardInterrupt, EOFError):
+            print("\nExiting application...")
+            p2p_node.shutdown()
+            return False
         except Exception as e:
-            print(f"[ERROR] {e}")
+            print(f"[AUTH ERROR] An unexpected error occurred: {e}")
+            # Decide whether to continue or exit based on error severity
+            # For now, just print and continue the loop
+
+
+# --- Main CLI Loop (Refactored) ---
+def main_cli(node: P2PNode):
+    """Command-line interface for the P2P Node after authentication."""
+    print("\n--- Main Menu ---")
+    help_message = (
+        "\nAvailable Commands:\n"
+        "  list                                - List files in your shared folder\n"
+        "  peers                               - List known active peers from discovery server\n"
+        "  updatepeers                         - Force refresh of the active peer list\n"
+        "  search <filename>                   - Search for a file across active peers\n"
+        "  get <username> <filename>           - Download a file from a specific peer\n"
+        "  enable <filename>                   - Enable sharing a local file\n"
+        "  disable <filename>                  - Disable sharing a local file\n"
+        "  restrict <filename> <ip1,ip2,...>   - Restrict a file to specific node IPs\n"
+        "  unrestrict <filename>               - Remove restrictions on a file\n"
+        "  logout                              - Log out from the discovery server\n"
+        "  help                                - Show this help message\n"
+        "  exit                                - Log out and exit the application\n"
+    )
+    print(help_message)
+
+    while node.running:  # Check node status
+        try:
+            user_input = input(">> ").strip()
+            if not user_input:
+                continue
+
+            parts = user_input.split()
+            command = parts[0].lower()
+
+            # --- Command Handling ---
+            if command == "exit":
+                print("Exiting application...")
+                node.shutdown()  # Handles logout and cleanup
+                break  # Exit CLI loop
+
+            elif command == "logout":
+                if node.logout_user():
+                    print("Successfully logged out.")
+                    # After logout, should probably exit or go back to auth loop?
+                    # For now, exit the app.
+                    node.shutdown()  # Ensure full cleanup
+                    break
+                else:
+                    print("Logout failed or already logged out.")
+                    # Consider if node should still be running here
+
+            elif command == "help":
+                print(help_message)
+
+            # --- Commands requiring login ---
+            elif not node.session_token:
+                print("Please login first to use this command.")
+                # Optionally, break or return to auth loop here
+                continue
+
+            elif command == "list":  # List local shared files
+                files = node.list_local_shared_files()
+                if files:
+                    print("Locally shared files (enabled):")
+                    for f in files: print(f" - {f}")
+                else:
+                    print("No files currently shared or available in shared directory.")
+
+            elif command == "peers":  # List known peers
+                with node.peers_lock:  # Access peer list safely
+                    if node.peers:
+                        print(node.peers)
+                        print("Known active peers:")
+                        for uname, (ip, port, key_pem) in node.peers.items():
+                            key_status = "Yes" if key_pem else "No"
+                            print(f" - {uname} @ {ip}:{port} (Pub Key: {key_status})")
+                    else:
+                        print("No other active peers known. Try 'updatepeers'.")
+
+            elif command == "updatepeers":  # Force update peer list
+                if node.update_peer_list_from_server():
+                    print("Peer list updated.")
+                    # Optionally list peers after update:
+                    # main_cli("peers") # Be careful with direct calls
+                else:
+                    print("Failed to update peer list from server.")
+
+            elif command == "search":
+                if len(parts) == 2:
+                    filename = parts[1]
+                    # search_file_discovery returns List[Tuple[str, int]] -> [(ip, port), ...]
+                    results_locations = node.search_file_discovery(filename)
+                    if results_locations:
+                        print(f"Peers with file '{filename}':")
+                        found_users = []
+                        with node.peers_lock:  # Access peer list safely
+                            # Map locations back to usernames
+                            for res_ip, res_port in results_locations:
+                                found = False
+                                for uname, (p_ip, p_port, _) in node.peers.items():
+                                    if p_ip == res_ip and p_port == res_port:
+                                        found_users.append(uname)
+                                        found = True
+                                        break  # Found user for this ip/port
+                                if not found:
+                                    # If IP/Port from search doesn't match a known peer
+                                    found_users.append(f"Unknown ({res_ip}:{res_port})")
+
+                        if found_users:
+                            for user_info in found_users: print(f" - {user_info}")
+                        # else: search_file_discovery prints "not found"
+                    # else: search_file_discovery prints "not found" or error
+                else:
+                    print("Usage: search <filename>")
+
+            elif command == "get":  # Download file
+                if len(parts) == 3:
+                    username = parts[1]
+                    filename = parts[2]
+                    node.download_file_from_peer(username, filename)  # Handles printing success/failure
+                else:
+                    print("Usage: get <username> <filename>")
+
+            elif command == "enable":
+                if len(parts) == 2:
+                    filename = parts[1]
+                    if node.enable_file(filename):
+                        print(f"File '{filename}' enabled for sharing.")
+                    # else: enable_file prints messages for failure/already enabled
+                else:
+                    print("Usage: enable <filename>")
+
+            elif command == "disable":
+                if len(parts) == 2:
+                    filename = parts[1]
+                    if node.disable_file(filename):
+                        print(f"File '{filename}' disabled from sharing.")
+                    # else: disable_file prints message for failure
+                else:
+                    print("Usage: disable <filename>")
+
+            elif command == "restrict":
+                if len(parts) >= 3:
+                    filename = parts[1]
+                    # Join remaining parts in case IPs contain spaces, then split by comma
+                    ips_str = "".join(parts[2:])
+                    ips = [ip.strip() for ip in ips_str.split(',') if ip.strip()]
+                    if ips:
+                        if node.restrict_file(filename, ips):
+                            print(f"File '{filename}' restricted successfully.")
+                        # else: restrict_file prints error messages
+                    else:
+                        print("Usage: restrict <filename> <ip1,ip2,...> (Provide at least one IP)")
+                else:
+                    print("Usage: restrict <filename> <ip1,ip2,...>")
+
+            elif command == "unrestrict":
+                if len(parts) == 2:
+                    filename = parts[1]
+                    if node.unrestrict_file(filename):
+                        print(f"Restrictions removed for file '{filename}'.")
+                    # else: unrestrict_file prints message if not restricted
+                else:
+                    print("Usage: unrestrict <filename>")
+
+            else:
+                print(f"Unknown command: '{command}'. Type 'help' for available commands.")
+
+        except (KeyboardInterrupt, EOFError):
+            print("\nCaught Ctrl+C / Ctrl+D. Exiting...")
+            node.shutdown()  # Gracefully shutdown
+            break  # Exit CLI loop
+        except Exception as e:
+            print(f"\n[CLI ERROR] An unexpected error occurred: {type(e).__name__} - {e}")
+            # Log the error, maybe print traceback for debugging
+            import traceback
+            traceback.print_exc()
+            # Decide whether to continue or exit based on error severity
+            # For now, just print and continue the loop
 
 
 # ---------------------------
@@ -160,25 +245,39 @@ def authentication_loop(p2p_node: P2PNode, ip, port):
 # ---------------------------
 def main():
     parser = argparse.ArgumentParser(description="P2P File Sharing Node with Discovery & Heartbeat")
-    parser.add_argument("--port", type=int, default=5000, help="Port to listen on for P2P connections")
+    # Allow specifying listen host and port
+    parser.add_argument("--host", type=str, default="0.0.0.0",
+                        help="Host address to bind the listening socket (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=5000, help="Port to listen on for P2P connections (default: 5000)")
     args = parser.parse_args()
 
-    p2p_node = P2PNode(port=args.port)
-    p2p_node.start_server()
-
-    # Determine the own IP address
+    # --- Node Initialization ---
     try:
-        own_ip = socket.gethostbyname(socket.gethostname())
-    except Exception:
-        own_ip = "127.0.0.1"
+        p2p_node = P2PNode(host=args.host, port=args.port)
+        # p2p_node.start_server() is called within P2PNode.__init__ now
+        if not p2p_node.running:
+            print("[ERROR] Failed to initialize P2P Node. Exiting.")
+            sys.exit(1)
 
-    # Initial registration with the discovery server
+    except Exception as init_e:
+        print(f"[FATAL ERROR] Could not initialize P2P Node: {init_e}")
+        sys.exit(1)
+    # --- End Node Initialization ---
 
-    # register_with_discovery(own_ip, args.port)
+    # --- Authentication and Main Loop ---
+    try:
+        # Run authentication loop first
+        if authentication_loop(p2p_node):
+            # If authentication succeeded, run the main command loop
+            main_cli(p2p_node)
+        # If authentication_loop returns False (e.g., user chose exit), main ends here.
 
-    if authentication_loop(p2p_node, own_ip, args.port):
-        print("[INFO] Peer node started and registered with discovery server.")
-        cli_loop(p2p_node)
+    except Exception as main_e:
+        print(f"[FATAL ERROR] An error occurred in the main execution: {main_e}")
+        p2p_node.shutdown()  # Attempt graceful shutdown
+        sys.exit(1)
+
+    print("\nApplication finished.")
 
 
 if __name__ == "__main__":
